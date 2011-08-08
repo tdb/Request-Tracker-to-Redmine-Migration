@@ -1,3 +1,12 @@
+== Changes by github/tdb
+
+The changes I've made in this fork at purely for my own benefit.
+They're likely not useful as-is to others, but I'm sharing them
+here anyway in case someone wants to cherry pick one out.
+
+Unless your situation is identical to mine this copy of the script
+is unlikely to do what you want.
+
 == Introduction
 
 This project was meant for transitioning from an RT based tracking system to Redmine.
