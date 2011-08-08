@@ -666,7 +666,7 @@ namespace :redmine do
                        :lastname => ln[0, limit_for(User, 'lastname')].gsub(/[^\w\s\'\-]/i, '-')
 
           u.login = rtuser.name[0,limit_for(User, 'login')].gsub(/[^a-z0-9_\-@\.]/i, '-')
-          u.password = 'rt_user'
+          u.password = genpass(30)
           # RT permissions not boiled down to one action
           # u.admin = true if TracPermission.find_by_username_and_action(username, 'admin')
           
@@ -847,6 +847,11 @@ namespace :redmine do
         break if yield value
       end
     end # end def prompt
+    
+    def genpass(length)
+      o = [('a'..'z'),('A'..'Z'),('0'..'9')].map{|i| i.to_a}.flatten
+      return (0..length).map{ o[rand(o.length)] }.join
+    end
     
     DEFAULT_PORTS = {'mysql' => 3306, 'postgresql' => 5432}
 
