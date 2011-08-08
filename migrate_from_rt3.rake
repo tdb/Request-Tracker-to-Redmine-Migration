@@ -306,7 +306,7 @@ namespace :redmine do
                 changeset.attachments.each do |attachment|
                   next if attachment.content.blank? # looking for content
                   
-                  if attachment.filename 
+                  if not attachment.filename.blank?
                     # looking for images/files/whatever
                     
                     a = nil
