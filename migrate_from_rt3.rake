@@ -229,6 +229,7 @@ namespace :redmine do
             print "Migrating tickets"
             queue.tickets.find_each do |ticket|
               next if ticket.status == 'deleted' # we don't migrate deleted tickets
+              next if ticket.id != ticket.effectiveid # merged ticket, we'll handle that separately
               print '.'
               STDOUT.flush
               
@@ -276,7 +277,8 @@ namespace :redmine do
               end
               
               # Comments and status/resolution changes
-              ticket.transactions.each do |changeset|
+              # Handles merges properly by finding all related transactions for a ticket
+              RTTransactions.find_by_sql("SELECT transactions.* FROM tickets,transactions WHERE transactions.objectid=tickets.id AND tickets.effectiveid=#{ticket.id} ORDER BY transactions.id").each do |changeset|
                 next unless changeset.objecttype == "RT::Ticket" # we're only interested in ticket transactions
                 next if changeset.type.include?('EmailRecord') # we're not tracking this (dup info)
                 
