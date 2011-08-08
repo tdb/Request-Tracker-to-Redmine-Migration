@@ -437,6 +437,9 @@ namespace :redmine do
                 Time.fake(link.lastupdated) { TICKET_MAP[link.localbase].save! }
               end
           
+              # For reasons I can't fathom (must be a bug) the below if statement isn't true
+              # (even when it should be) unless this line is evaluated first. Odd eh?
+              link.base[link.base.rindex('/')+1..link.base.length]
               # merged into works a little different if target and base are the same.
               if (link.type == 'MergedInto' && TICKET_MAP[link.base[link.base.rindex('/')+1..link.base.length].to_i] && TICKET_MAP[link.localtarget])  &&
                   (link.localbase == link.localtarget)
