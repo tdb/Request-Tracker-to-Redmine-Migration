@@ -215,152 +215,152 @@ namespace :redmine do
         
           # Tickets - migrate by queue
           RTQueues.find_each do |queue| # find_each
-            next if queue.Name == '___Approvals' # we don't migrate this queue
+            next if queue.name == '___Approvals' # we don't migrate this queue
             # get an identifier for the queue
-            prompt('Redmine target project identifier for %s queue' % queue.Name, :default => queue.Name.downcase.dasherize.gsub(/[ ]/,'-')) {|identifier| RTMigrate.target_project_identifier identifier}
+            prompt('Redmine target project identifier for %s queue' % queue.name, :default => queue.name.downcase.dasherize.gsub(/[ ]/,'-')) {|identifier| RTMigrate.target_project_identifier identifier}
             
             # turn on custom fields for this project
             @target_project.issue_custom_fields << custom_field_map.values
             
             print "Migrating tickets"
             queue.tickets.find_each do |ticket|
-              next if ticket.Status == 'deleted' # we don't migrate deleted tickets
+              next if ticket.status == 'deleted' # we don't migrate deleted tickets
               print '.'
               STDOUT.flush
               
               # create the new issue
               i = Issue.new :project => @target_project,
-                              :subject => encode((ticket.Subject + ': RT ' + ticket.id.to_s)[0, limit_for(Issue, 'subject')]),
+                              :subject => encode((ticket.subject + ': RT ' + ticket.id.to_s)[0, limit_for(Issue, 'subject')]),
                               :description => 'RT migrate. If this text is present, no comment was made on RT ticket creation',
-                              :priority => normalize_rt_priority(ticket.Priority) || DEFAULT_PRIORITY,
-                              :created_on => ticket.Created,
-                              :start_date => ticket.Started
+                              :priority => normalize_rt_priority(ticket.priority) || DEFAULT_PRIORITY,
+                              :created_on => ticket.created,
+                              :start_date => ticket.started
                               
               
               # each RT ticket has a 'Create' transaction, which has creator or it has an AddWatcher of Requestor type
               # Redmine only lets us have one author, so other watchers will be added later
               # TODO this assumes that the last AddWatcher isn't matched with a DelWatcher that would have no one requesting the ticket
-              r = ticket.transactions.find(:last, :conditions => {:ObjectType => 'RT::Ticket', :Type => 'AddWatcher', :Field => 'Requestor'})
+              r = ticket.transactions.find(:last, :conditions => {:objecttype => 'RT::Ticket', :type => 'AddWatcher', :field => 'Requestor'})
               # if add watcher is still not there, go with created user
-              r ||= ticket.transactions.find(:first, :conditions => {:ObjectType => 'RT::Ticket', :Type => 'Create'})
+              r ||= ticket.transactions.find(:first, :conditions => {:objecttype => 'RT::Ticket', :type => 'Create'})
               
-              i.author = find_or_create_user(r.NewValue || r.Creator) # requester
-              i.status = STATUS_MAPPING[ticket.Status] || DEFAULT_STATUS
+              i.author = find_or_create_user(r.newvalue || r.creator) # requester
+              i.status = STATUS_MAPPING[ticket.status] || DEFAULT_STATUS
               
               # only copy over due dates that make sense
-              if ticket.Due > ticket.Started
-                i.due_date = ticket.Due
+              if ticket.due > ticket.started
+                i.due_date = ticket.due
               end
               
               # RT has no concept of a tracker. so default it
               i.tracker = DEFAULT_TRACKER
               
               # time lives at ticket and transactions for RT
-              i.estimated_hours = ticket.TimeEstimated / 60
+              i.estimated_hours = ticket.timeestimated / 60
               
               # if importing into a blank system this works 1 to 1, otherwise an RT ID field is created to track old numbers
               i.id = ticket.id unless Issue.exists?(ticket.id)
               
-              next unless Time.fake(ticket.LastUpdated) { i.save! }
+              next unless Time.fake(ticket.lastupdated) { i.save! }
               TICKET_MAP[ticket.id] = i
               migrated_tickets += 1
               
               # Owner
-              unless ticket.Owner.blank?
-                i.assigned_to = find_or_create_user(ticket.Owner, true)
-                Time.fake(ticket.LastUpdated) { i.save! }
+              unless ticket.owner.blank?
+                i.assigned_to = find_or_create_user(ticket.owner, true)
+                Time.fake(ticket.lastupdated) { i.save! }
               end
               
               # Comments and status/resolution changes
               ticket.transactions.each do |changeset|
-                next unless changeset.ObjectType == "RT::Ticket" # we're only interested in ticket transactions
-                next if changeset.Type.include?('EmailRecord') # we're not tracking this (dup info)
+                next unless changeset.objecttype == "RT::Ticket" # we're only interested in ticket transactions
+                next if changeset.type.include?('EmailRecord') # we're not tracking this (dup info)
                 
                 # each transaction can have 1..N attachments (refer to model)
                 # a transaction = a journal entry
-                n = Journal.new :created_on => changeset.Created
-                n.user = find_or_create_user(changeset.Creator)
+                n = Journal.new :created_on => changeset.created
+                n.user = find_or_create_user(changeset.creator)
                 n.journalized = i # this entry for this issue
                 
                 # are any of the attachments files
                 changeset.attachments.each do |attachment|
-                  next if attachment.Content.blank? # looking for content
+                  next if attachment.content.blank? # looking for content
                   
-                  if attachment.Filename 
+                  if attachment.filename 
                     # looking for images/files/whatever
                     
                     a = nil
                     attachment.open {
                       a = Attachment.new :created_on => attachment.time
                       a.file = attachment
-                      a.author = find_or_create_user(attachment.Creator)
+                      a.author = find_or_create_user(attachment.creator)
                       a.container = i
-                      a.description = 'RT migrate: ' + attachment.Filename
+                      a.description = 'RT migrate: ' + attachment.filename
                       migrated_ticket_attachments += 1 if a.save!
                     }
                     
                     # lets make it show if save worked and it's an image
-                    if a && attachment.ContentType.include?('image') then n.notes || i.description << ' !'+attachment.Filename+'!' end
+                    if a && attachment.contenttype.include?('image') then n.notes || i.description << ' !'+attachment.filename+'!' end
                   else
-                    if changeset.Type == 'Create'
+                    if changeset.type == 'Create'
                       # note goes with description
-                      i.description = convert_wiki_text(encode(attachment.Content))
+                      i.description = convert_wiki_text(encode(attachment.content))
                     else
                       # content is a note
-                      n.notes = convert_wiki_text(encode(attachment.Content))
+                      n.notes = convert_wiki_text(encode(attachment.content))
                     end
                   end
                     
                 end
                 
                 ## give the ticket to someone else, steal the ticket
-                if (changeset.Type == 'Give' || changeset.Type == 'Steal') && changeset.Field == 'Owner'
+                if (changeset.type == 'Give' || changeset.type == 'Steal') && changeset.field == 'Owner'
                   n.details << JournalDetail.new(:property => 'attr',
                                                  :prop_key => 'assigned_to_id',
-                                                 :old_value => find_or_create_user(changeset.OldValue) {|u| u ? u.id : nil },
-                                                 :value => find_or_create_user(changeset.NewValue) {|u| u ? u.id : nil })
+                                                 :old_value => find_or_create_user(changeset.oldvalue) {|u| u ? u.id : nil },
+                                                 :value => find_or_create_user(changeset.newvalue) {|u| u ? u.id : nil })
                 end
                 
                 ## Could be a status change
-                if changeset.Type == 'Status' &&
-                     STATUS_MAPPING[changeset.OldValue] &&
-                     STATUS_MAPPING[changeset.NewValue] &&
-                     (STATUS_MAPPING[changeset.OldValue] != STATUS_MAPPING[changeset.NewValue])
+                if changeset.type == 'Status' &&
+                     STATUS_MAPPING[changeset.oldvalue] &&
+                     STATUS_MAPPING[changeset.newvalue] &&
+                     (STATUS_MAPPING[changeset.oldvalue] != STATUS_MAPPING[changeset.newvalue])
                   n.details << JournalDetail.new(:property => 'attr',
                                                  :prop_key => 'status_id',
-                                                 :old_value => STATUS_MAPPING[changeset.OldValue].id,
-                                                 :value => STATUS_MAPPING[changeset.NewValue].id)
+                                                 :old_value => STATUS_MAPPING[changeset.oldvalue].id,
+                                                 :value => STATUS_MAPPING[changeset.newvalue].id)
                 end # end status change
                 
                 ## set estimated time on ticket
-                if changeset.Type == 'Set' && changeset.Field == 'TimeEstimated'
-                  i.estimated_hours = changeset.NewValue.to_f / 60
+                if changeset.type == 'Set' && changeset.field == 'TimeEstimated'
+                  i.estimated_hours = changeset.newvalue.to_f / 60
                   
                   n.details << JournalDetail.new(:property => 'attr',
                                                  :prop_key => 'estimated_hours',
-                                                 :old_value => changeset.OldValue.to_f / 60,
-                                                 :value => changeset.NewValue.to_f / 60)
+                                                 :old_value => changeset.oldvalue.to_f / 60,
+                                                 :value => changeset.newvalue.to_f / 60)
                 end
                 
                 ## change the subject header
-                if changeset.Type == 'Set' && changeset.Field == 'Subject'
-                  i.estimated_hours = changeset.NewValue.to_f / 60
+                if changeset.type == 'Set' && changeset.field == 'Subject'
+                  i.estimated_hours = changeset.newvalue.to_f / 60
                   
                   n.details << JournalDetail.new(:property => 'attr',
                                                  :prop_key => 'subject',
-                                                 :old_value => changeset.OldValue,
-                                                 :value => changeset.NewValue)
+                                                 :old_value => changeset.oldvalue,
+                                                 :value => changeset.newvalue)
                 end
                 
                 # time logged at a ticket level and with comments
-                if changeset.TimeTaken > 0 || (changeset.Type == 'Set' && changeset.Field == 'TimeWorked')
+                if changeset.timetaken > 0 || (changeset.type == 'Set' && changeset.field == 'TimeWorked')
                   # TODO: assumes changest.OldValue = 0
                   (TimeEntry.new :project => @target_project,
-                                      :user => find_or_create_user(changeset.Creator),
+                                      :user => find_or_create_user(changeset.creator),
                                       :issue => i,
-                                      :hours => (changeset.TimeTaken.to_f + changeset.NewValue.to_f) / 60, # only one of these values set, both default to 0
+                                      :hours => (changeset.timetaken.to_f + changeset.newvalue.to_f) / 60, # only one of these values set, both default to 0
                                       :comments => 'RT logged time',
-                                      :spent_on => changeset.Created,
+                                      :spent_on => changeset.created,
                                       :activity => TimeEntryActivity.last).save!
                   
                 end
@@ -368,14 +368,14 @@ namespace :redmine do
                 # add watchers since we don't have multiple author's to one issue
                 # this is NOT the same as 'star' watching a ticket in RT, but thats how it maps to redmine
                 # RT has it's own 'star' watch an issue that is not migrated
-                if changeset.Type == 'AddWatcher'
+                if changeset.type == 'AddWatcher'
                   (Watcher.new :watchable_type => 'Issue',
                                   :watchable_id => i.id,
-                                  :user_id => find_or_create_user(changeset.NewValue).id).save
+                                  :user_id => find_or_create_user(changeset.newvalue).id).save
                 end
                 
-                if changeset.Type == 'DelWatcher' 
-                  Watcher.destroy_all({:watchable_type => 'Issue', :user_id => find_or_create_user(changeset.NewValue).id, :watchable_id => i.id})
+                if changeset.type == 'DelWatcher' 
+                  Watcher.destroy_all({:watchable_type => 'Issue', :user_id => find_or_create_user(changeset.newvalue).id, :watchable_id => i.id})
                 end
                 
                 # save it
@@ -399,7 +399,7 @@ namespace :redmine do
               
               i.custom_field_values = custom_values
               i.save_custom_field_values
-              Time.fake(ticket.LastUpdated) { i.save! }
+              Time.fake(ticket.lastupdated) { i.save! }
             end # end ticket migration
             
             # update issue id sequence if needed (postgresql)
@@ -411,28 +411,28 @@ namespace :redmine do
           RTLinks.find_each do |link|
             begin
               # we can only link tickets that got migrated, of a certain type, that aren't equal to each other
-              if (RELATION_TYPE_MAPPING[link.Type] && TICKET_MAP[link.LocalBase] && TICKET_MAP[link.LocalTarget]) &&
-                  (link.LocalBase != link.LocalTarget)
+              if (RELATION_TYPE_MAPPING[link.type] && TICKET_MAP[link.localbase] && TICKET_MAP[link.localtarget]) &&
+                  (link.localbase != link.localtarget)
               
-                (IssueRelation.new :issue_from => TICKET_MAP[link.LocalBase],
-                                    :issue_to => TICKET_MAP[link.LocalTarget],
-                                    :relation_type => RELATION_TYPE_MAPPING[link.Type]).save!
+                (IssueRelation.new :issue_from => TICKET_MAP[link.localbase],
+                                    :issue_to => TICKET_MAP[link.localtarget],
+                                    :relation_type => RELATION_TYPE_MAPPING[link.type]).save!
               end
         
               # link of 'MemberOf' Type is really a parent id for the issue
-              if link.Type == 'MemberOf' && TICKET_MAP[link.LocalBase] && TICKET_MAP[link.LocalTarget]
-                TICKET_MAP[link.LocalBase].parent_issue_id = TICKET_MAP[link.LocalTarget].id
-                Time.fake(link.LastUpdated) { TICKET_MAP[link.LocalBase].save! }
+              if link.type == 'MemberOf' && TICKET_MAP[link.localbase] && TICKET_MAP[link.localtarget]
+                TICKET_MAP[link.localbase].parent_issue_id = TICKET_MAP[link.localtarget].id
+                Time.fake(link.lastupdated) { TICKET_MAP[link.localbase].save! }
               end
           
               # merged into works a little different if target and base are the same.
-              if (link.Type == 'MergedInto' && TICKET_MAP[link.Base[link.Base.rindex('/')+1..link.Base.length].to_i] && TICKET_MAP[link.LocalTarget])  &&
-                  (link.LocalBase == link.LocalTarget)
+              if (link.type == 'MergedInto' && TICKET_MAP[link.base[link.base.rindex('/')+1..link.base.length].to_i] && TICKET_MAP[link.localtarget])  &&
+                  (link.localbase == link.localtarget)
                 # for whatever reason RT decided it legitimate to have a link have itself as target and base
                 # have to go the Base/Target field to find which to duplicate
-                (IssueRelation.new :issue_from => TICKET_MAP[link.Base[link.Base.rindex('/')+1..link.Base.length].to_i],
-                                    :issue_to => TICKET_MAP[link.LocalTarget],
-                                    :relation_type => RELATION_TYPE_MAPPING[link.Type]).save!
+                (IssueRelation.new :issue_from => TICKET_MAP[link.base[link.base.rindex('/')+1..link.base.length].to_i],
+                                    :issue_to => TICKET_MAP[link.localtarget],
+                                    :relation_type => RELATION_TYPE_MAPPING[link.type]).save!
               
               end
             rescue
@@ -610,22 +610,22 @@ namespace :redmine do
         # return anonymous if not found
         return User.anonymous if !rtuser
         # return redmine system user if that's the case
-        return User.find(:first, :conditions => {:admin => true}) if rtuser.Name == 'RT_System'
+        return User.find(:first, :conditions => {:admin => true}) if rtuser.name == 'RT_System'
         # return nil if it's nobody
-        return nil if rtuser.Name == 'Nobody'
+        return nil if rtuser.name == 'Nobody'
         
         # search redmine for this user
-        u = User.find_by_mail(rtuser.EmailAddress)
+        u = User.find_by_mail(rtuser.emailaddress)
         
         if !u
           # Create a new user if not found
-          mail = rtuser.EmailAddress[0,limit_for(User, 'mail')]
+          mail = rtuser.emailaddress[0,limit_for(User, 'mail')]
         #  if mail_attr = RTUsers.find_by_Name(username)
         #    mail = mail_attr.value
         #  end
           mail = "#{mail}@foo.bar" unless mail.include?("@")
 
-          name = rtuser.Name
+          name = rtuser.name
         #  if name_attr = RTUsers.find_by_Name(username)
         #    name = name_attr.value
         #  end
@@ -637,7 +637,7 @@ namespace :redmine do
                        :firstname => fn[0, limit_for(User, 'firstname')].gsub(/[^\w\s\'\-]/i, '-'),
                        :lastname => ln[0, limit_for(User, 'lastname')].gsub(/[^\w\s\'\-]/i, '-')
 
-          u.login = rtuser.Name[0,limit_for(User, 'login')].gsub(/[^a-z0-9_\-@\.]/i, '-')
+          u.login = rtuser.name[0,limit_for(User, 'login')].gsub(/[^a-z0-9_\-@\.]/i, '-')
           u.password = 'rt_user'
           # RT permissions not boiled down to one action
           # u.admin = true if TracPermission.find_by_username_and_action(username, 'admin')
@@ -665,8 +665,8 @@ namespace :redmine do
       class RTCustomFields < ActiveRecord::Base
         set_table_name :customfields
         
-        has_many :customfieldvalues, :class_name => "RTCustomFieldValues", :foreign_key => :CustomField
-        has_many :objectcustomfieldvalues, :class_name => "RTObjectCustomFieldValues", :foreign_key => :CustomField
+        has_many :customfieldvalues, :class_name => "RTCustomFieldValues", :foreign_key => :customfield
+        has_many :objectcustomfieldvalues, :class_name => "RTObjectCustomFieldValues", :foreign_key => :customfield
       end
       
       # each custom field has a list of values
@@ -680,29 +680,31 @@ namespace :redmine do
       class RTQueues < ActiveRecord::Base
         set_table_name :queues
         
-        has_many :tickets, :class_name => "RTTickets", :foreign_key => :Queue
+        has_many :tickets, :class_name => "RTTickets", :foreign_key => :queue
       end
       
       # RT Ticket = Redmine issue
       # RT does not have a concept of tracker, so all tickets are of one type
       class RTTickets < ActiveRecord::Base
         set_table_name :tickets
+        set_inheritance_column :ruby_type
         
         belongs_to :rtqueues
-        has_many :transactions, :class_name => "RTTransactions", :foreign_key => :ObjectId
-        has_many :objectcustomfieldvalues, :class_name => "RTObjectCustomFieldValues", :foreign_key => :ObjectId
+        has_many :transactions, :class_name => "RTTransactions", :foreign_key => :objectid
+        has_many :objectcustomfieldvalues, :class_name => "RTObjectCustomFieldValues", :foreign_key => :objectid
         
         # relations
-        has_many :relations_from, :class_name => 'RTLinks', :foreign_key => 'LocalBase'
-        has_many :relations_to, :class_name => 'RTLinks', :foreign_key => 'LocalTarget'
+        has_many :relations_from, :class_name => 'RTLinks', :foreign_key => 'localbase'
+        has_many :relations_to, :class_name => 'RTLinks', :foreign_key => 'localtarget'
       end
       
       # RTLinks = Redmine subtasks/related issues
       class RTLinks < ActiveRecord::Base
         set_table_name :links
+        set_inheritance_column :ruby_type
         
-        belongs_to :ticket_from, :class_name => 'RTTickets', :foreign_key => 'LocalBase'
-        belongs_to :ticket_to, :class_name => 'RTTickets', :foreign_key => 'LocalTarget'
+        belongs_to :ticket_from, :class_name => 'RTTickets', :foreign_key => 'localbase'
+        belongs_to :ticket_to, :class_name => 'RTTickets', :foreign_key => 'localtarget'
       end
       
       # custom field vlaues for tickets (and other RT objects)
@@ -717,10 +719,11 @@ namespace :redmine do
       # transactions have attachemnts
       class RTTransactions < ActiveRecord::Base
         set_table_name :transactions
+        set_inheritance_column :ruby_type
         
         # that is to say there are ticket transactions here was well as many others
         belongs_to :rttickets, :polymorphic => true
-        has_many :attachments, :class_name => "RTAttachments", :foreign_key => :TransactionId
+        has_many :attachments, :class_name => "RTAttachments", :foreign_key => :transactionid
       end
       
       # RT attachemnts is not just files, but also content
@@ -729,15 +732,15 @@ namespace :redmine do
         
         belongs_to :rttransactions # foreign key TransactionId
         
-        def time; Time.at(read_attribute(:Created)) end
+        def time; Time.at(read_attribute(:created)) end
         
         def size
           @file.stat.size
         end
         
-        def content_type; read_attribute(:ContentType) end
+        def content_type; read_attribute(:contenttype) end
         
-        def original_filename; read_attribute(:Filename) end
+        def original_filename; read_attribute(:filename) end
         
         def read(*args)
           @file.read(*args)
@@ -746,8 +749,8 @@ namespace :redmine do
         def open
           # RT stores files as LBLOB, so we write that out to a tempfile
           # that can then be attached to something
-          tf = Tempfile.open(sanitize_filename(read_attribute(:Filename))) {|f| 
-            f.write(read_attribute(:Content))
+          tf = Tempfile.open(sanitize_filename(read_attribute(:filename))) {|f| 
+            f.write(read_attribute(:content))
             f.flush
             f.rewind
             
