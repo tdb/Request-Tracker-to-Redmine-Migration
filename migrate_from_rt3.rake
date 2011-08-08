@@ -120,13 +120,17 @@ namespace :redmine do
       end
       
       # Basic wiki syntax conversion, an RT ticket comment = Redmine issue update
-      def self.convert_wiki_text(text)
+      def self.convert_wiki_text(text, contenttype, contentencoding)
         return '' if text.blank? # nothing to convert
         
         text = text.strip
+        if contentencoding == "quoted-printable"
+          # doesn't deal with =A0 (&nbsp;) correctly, so remove it
+          text = text.gsub(/=A0/, ' ').unpack('M*').to_s
+        end
         # if we have the gem lets translate html to textile
         if Gem.available?('html2textile') # we've included it above
-          if text.downcase.grep(/<\/?[^>]*>/).count > 1 # only parse html blocks
+          if contenttype == "text/html" # only parse html blocks
             # remove RT generated <img> tags, they are useless, don't translate, and we add it back later
             text = text.downcase.gsub(/<\/?img[^>]*>/, '')
             
@@ -304,10 +308,10 @@ namespace :redmine do
                   else
                     if changeset.type == 'Create'
                       # note goes with description
-                      i.description = convert_wiki_text(encode(attachment.content))
+                      i.description = convert_wiki_text(encode(attachment.content), attachment.contenttype, attachment.contentencoding)
                     else
                       # content is a note
-                      n.notes = convert_wiki_text(encode(attachment.content))
+                      n.notes = convert_wiki_text(encode(attachment.content), attachment.contenttype, attachment.contentencoding)
                     end
                   end
                     
