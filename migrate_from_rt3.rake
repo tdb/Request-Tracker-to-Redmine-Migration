@@ -103,6 +103,12 @@ namespace :redmine do
                               }
       CUSTOM_FIELD_MAPPING.default = 'string' # if not found default to string type
       
+      # Map email addresses on to other addresses
+      # Useful if you've used multiple address in RT and want to consolidate
+      USER_EMAIL_MAPPING = {
+                        'alias@example.com' => 'real@example.com'
+                        }
+      
       # utillity class used to take time in the past
       class ::Time
         class << self
@@ -633,11 +639,15 @@ namespace :redmine do
         return nil if rtuser.name == 'Nobody'
         
         # search redmine for this user
-        u = User.find_by_mail(rtuser.emailaddress)
+        mail = rtuser.emailaddress
+        if USER_EMAIL_MAPPING[mail]
+          mail = USER_EMAIL_MAPPING[mail]
+        end
+        u = User.find_by_mail(mail)
         
         if !u
           # Create a new user if not found
-          mail = rtuser.emailaddress[0,limit_for(User, 'mail')]
+          mail = mail[0,limit_for(User, 'mail')]
         #  if mail_attr = RTUsers.find_by_Name(username)
         #    mail = mail_attr.value
         #  end
