@@ -234,12 +234,15 @@ namespace :redmine do
               STDOUT.flush
               
               # create the new issue
+              s = ticket.subject
+              if s.blank?
+                s = "[No subject]"
+              end
               i = Issue.new :project => @target_project,
-                              :subject => encode((ticket.subject + ': RT ' + ticket.id.to_s)[0, limit_for(Issue, 'subject')]),
+                              :subject => encode(s[0, limit_for(Issue, 'subject')]),
                               :description => 'RT migrate. If this text is present, no comment was made on RT ticket creation',
                               :priority => normalize_rt_priority(ticket.priority) || DEFAULT_PRIORITY,
-                              :created_on => ticket.created,
-                              :start_date => ticket.started
+                              :created_on => ticket.created
                               
               
               # each RT ticket has a 'Create' transaction, which has creator or it has an AddWatcher of Requestor type
@@ -264,17 +267,17 @@ namespace :redmine do
               i.estimated_hours = ticket.timeestimated / 60
               
               # if importing into a blank system this works 1 to 1, otherwise an RT ID field is created to track old numbers
-              i.id = ticket.id unless Issue.exists?(ticket.id)
+              #i.id = ticket.id unless Issue.exists?(ticket.id)
               
               next unless Time.fake(ticket.lastupdated) { i.save! }
               TICKET_MAP[ticket.id] = i
               migrated_tickets += 1
               
               # Owner
-              unless ticket.owner.blank?
-                i.assigned_to = find_or_create_user(ticket.owner, true)
-                Time.fake(ticket.lastupdated) { i.save! }
-              end
+              #unless ticket.owner.blank?
+              #  i.assigned_to = find_or_create_user(ticket.owner, true)
+              #  Time.fake(ticket.lastupdated) { i.save! }
+              #end
               
               rtids = Hash.new()
               descset = 0
@@ -326,12 +329,12 @@ namespace :redmine do
                 end
                 
                 ## give the ticket to someone else, steal the ticket
-                if (changeset.type == 'Give' || changeset.type == 'Steal') && changeset.field == 'Owner'
-                  n.details << JournalDetail.new(:property => 'attr',
-                                                 :prop_key => 'assigned_to_id',
-                                                 :old_value => find_or_create_user(changeset.oldvalue) {|u| u ? u.id : nil },
-                                                 :value => find_or_create_user(changeset.newvalue) {|u| u ? u.id : nil })
-                end
+                #if (changeset.type == 'Give' || changeset.type == 'Steal' || changeset.type == 'Take') && changeset.field == 'Owner'
+                #  n.details << JournalDetail.new(:property => 'attr',
+                #                                 :prop_key => 'assigned_to_id',
+                #                                 :old_value => find_or_create_user(changeset.oldvalue) {|u| u ? u.id : nil },
+                #                                 :value => find_or_create_user(changeset.newvalue) {|u| u ? u.id : nil })
+                #end
                 
                 ## Could be a status change
                 if changeset.type == 'Status' &&
