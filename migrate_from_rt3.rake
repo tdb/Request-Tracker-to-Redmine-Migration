@@ -277,6 +277,7 @@ namespace :redmine do
               end
               
               rtids = Hash.new()
+              descset = 0
               
               # Comments and status/resolution changes
               # Handles merges properly by finding all related transactions for a ticket
@@ -312,9 +313,10 @@ namespace :redmine do
                     # lets make it show if save worked and it's an image
                     if a && attachment.contenttype.include?('image') then n.notes || i.description << ' !'+attachment.filename+'!' end
                   else
-                    if changeset.type == 'Create'
+                    if changeset.type == 'Create' && descset == 0
                       # note goes with description
                       i.description = convert_wiki_text(encode(attachment.content), attachment.contenttype, attachment.contentencoding)
+                      descset = 1
                     else
                       # content is a note
                       n.notes = convert_wiki_text(encode(attachment.content), attachment.contenttype, attachment.contentencoding)
