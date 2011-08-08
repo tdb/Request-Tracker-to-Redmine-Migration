@@ -205,16 +205,16 @@ namespace :redmine do
           puts
           
           # set an RT ticket id field as a Redmine issue custom field.
-          r = IssueCustomField.find(:first, :conditions => { :name => "RT ID" })
+          r = IssueCustomField.find(:first, :conditions => { :name => "RT#" })
           # make it a string so it's searchable only add if it's not found
-          r ||= IssueCustomField.new(:name => 'RT ID',
+          r ||= IssueCustomField.new(:name => 'RT#',
                                    :field_format => 'string',
                                    :searchable => true,
                                    :is_filter => true) if r.nil?
           r.trackers = Tracker.find(:all)
           
           r.save!
-          custom_field_map['RT ID'] = r
+          custom_field_map['RT#'] = r
           ### end custom field
         
           # Tickets - migrate by queue
@@ -276,11 +276,15 @@ namespace :redmine do
                 Time.fake(ticket.lastupdated) { i.save! }
               end
               
+              rtids = Hash.new()
+              
               # Comments and status/resolution changes
               # Handles merges properly by finding all related transactions for a ticket
               RTTransactions.find_by_sql("SELECT transactions.* FROM tickets,transactions WHERE transactions.objectid=tickets.id AND tickets.effectiveid=#{ticket.id} ORDER BY transactions.id").each do |changeset|
                 next unless changeset.objecttype == "RT::Ticket" # we're only interested in ticket transactions
                 next if changeset.type.include?('EmailRecord') # we're not tracking this (dup info)
+                
+                rtids[changeset.objectid.to_s] = 1
                 
                 # each transaction can have 1..N attachments (refer to model)
                 # a transaction = a journal entry
@@ -401,7 +405,7 @@ namespace :redmine do
               end
               
               # lets add RT ID
-              custom_values[custom_field_map['RT ID'].id] = ticket.id
+              custom_values[custom_field_map['RT#'].id] = rtids.keys.sort.join(' ')
               
               i.custom_field_values = custom_values
               i.save_custom_field_values
